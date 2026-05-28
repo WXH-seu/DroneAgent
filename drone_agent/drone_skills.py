@@ -1,0 +1,117 @@
+from typing import Dict
+
+import yaml
+
+from drone_agent.crazyflie_adapter import CrazyflieAdapter, FlightSafetyError
+
+
+CONFIG_PATH = "configs/drones.yaml"
+
+MAX_HEIGHT = 0.30
+MAX_SIZE = 0.25
+MAX_VELOCITY = 0.10
+MAX_HOLD_TIME = 2.0
+
+
+def clamp(value, min_value, max_value):
+    return max(min_value, min(float(value), max_value))
+
+
+def load_drones() -> Dict:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)["drones"]
+
+
+def get_drone(vehicle: str) -> CrazyflieAdapter:
+    drones = load_drones()
+
+    if vehicle not in drones:
+        raise ValueError(f"Unknown drone vehicle: {vehicle}")
+
+    cfg = drones[vehicle]
+
+    return CrazyflieAdapter(
+        uri=cfg["uri"],
+        default_height=cfg.get("default_height", 0.25),
+        default_velocity=cfg.get("default_velocity", 0.10),
+        min_battery_v=cfg.get("min_battery_v", 3.75),
+        max_height_m=cfg.get("max_height_m", 0.45),
+    )
+
+
+def safe_result(ok: bool, action: str, result=None, error=None):
+    return {
+        "ok": ok,
+        "action": action,
+        "result": result,
+        "error": str(error) if error else None,
+    }
+
+
+def drone_status(vehicle: str, args: dict):
+    try:
+        drone = get_drone(vehicle)
+        result = drone.get_status()
+        return safe_result(True, "drone_status", result=result)
+    except Exception as e:
+        return safe_result(False, "drone_status", error=e)
+
+
+def drone_takeoff_land(vehicle: str, args: dict):
+    try:
+        drone = get_drone(vehicle)
+
+        height = clamp(args.get("height", 0.25), 0.10, MAX_HEIGHT)
+        hover_time = clamp(args.get("hover_time", 2.0), 0.5, MAX_HOLD_TIME)
+
+        result = drone.takeoff_land(
+            height=height,
+            hover_time=hover_time,
+        )
+
+        return safe_result(True, "drone_takeoff_land", result=result)
+
+    except FlightSafetyError as e:
+        return safe_result(False, "drone_takeoff_land", error=e)
+    except Exception as e:
+        return safe_result(False, "drone_takeoff_land", error=e)
+
+
+def drone_square_route(vehicle: str, args: dict):
+    try:
+        drone = get_drone(vehicle)
+
+        height = clamp(args.get("height", 0.25), 0.10, MAX_HEIGHT)
+        size = clamp(args.get("size", 0.15), 0.05, MAX_SIZE)
+        velocity = clamp(args.get("velocity", 0.08), 0.05, MAX_VELOCITY)
+        hold_time = clamp(args.get("hold_time", 1.0), 0.5, MAX_HOLD_TIME)
+
+        waypoints = [
+            (0.0, 0.0, height),
+            (0.0, size, height),
+            (size, size, height),
+            (size, 0.0, height),
+            (0.0, 0.0, height),
+        ]
+
+        result = drone.fly_waypoints(
+            waypoints=waypoints,
+            velocity=velocity,
+            hold_time=hold_time,
+        )
+
+        return safe_result(True, "drone_square_route", result=result)
+
+    except FlightSafetyError as e:
+        return safe_result(False, "drone_square_route", error=e)
+    except Exception as e:
+        return safe_result(False, "drone_square_route", error=e)
+
+
+def drone_emergency_stop(vehicle: str, args: dict):
+    try:
+        drone = get_drone(vehicle)
+        result = drone.emergency_stop()
+        return safe_result(True, "drone_emergency_stop", result=result)
+    except Exception as e:
+        return safe_result(False, "drone_emergency_stop", error=e)
